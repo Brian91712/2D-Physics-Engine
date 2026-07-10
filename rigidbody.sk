@@ -206,7 +206,6 @@ local function calculate_contact_points(scene: Scene struct, a: Rigidbody struct
           set {_closest-points::*} to {_point}
           set {_closest-points-dist} to {_distance}
           set {_count} to 1
-  # Render the contact points
   #
   return Collision struct instance:
     normal: {_mtv}
