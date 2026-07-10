@@ -1,0 +1,236 @@
+#-------------------------------
+# This is a rigidbody physics engine made by Brian9171. uses stuff probably
+#-------------------------------
+
+struct Rigidbody:
+  element: Element struct
+  #
+  velocity: vector = vector(0, 0, 0)
+  angular_velocity: number = 0
+  #
+  e: number = 0.0
+  mass: number = 1
+  inv_mass: number
+  inertia: number
+  inv_inertia: number
+  kinematic: boolean = false
+
+struct PhysicalScene:
+  scene: Scene struct
+  bodies: Rigidbody structs
+  gravity: vector = vector(0, -200, 0)
+  time: number = 1 # How fast time is moving
+
+struct Collision:
+  a: Rigidbody struct
+  b: Rigidbody struct
+  normal: vector
+  depth: number
+  contacts: vectors
+  contact_count: number
+
+function create_rigidbody(scene: PhysicalScene struct, body: Rigidbody struct, position: vector = vector(0, 0, 0), scale: vector = vector(20, 20, 0), colour: colour = rgb(255, 255, 255), rotation: number = 0) :: Rigidbody struct:
+  #
+  set {_body}->element to add_element_to_scene({_scene}->scene, Element struct instance):
+    position: {_position}
+    scale: {_scale}
+    colour: {_colour}
+    rotation: vector({_rotation}, 0, 0)
+  #
+  set {_body}->inertia to (({_body}->mass) * ((x of {_scale})^2 + (y of {_scale})^2)) / 12
+  set {_body}->inv_mass to 1 / ({_body}->mass)
+  set {_body}->inv_inertia to 1 / ({_body}->inertia)
+  add {_body} to {_scene}->bodies
+  return {_body}
+
+function update_physical_scene(scene: PhysicalScene struct):
+  set {_time} to {_scene}->time * 0.001
+  if {_time} <= 0:
+    stop
+  #
+  set {_rad-conversion} to 180 / π
+  #
+  loop 50 times:
+    for {_body} in {_scene}->bodies where [(input)->kinematic = false]:
+      #
+      set {_el} to {_body}->element
+      # Apply gravity
+      set {_body}->velocity to {_body}->velocity + {_scene}->gravity * {_time}
+      # Positional integration
+      set {_el}->position to {_el}->position + {_body}->velocity * {_time}
+      # Rotational integration
+      set {_el}->rotation to {_el}->rotation + vector(({_body}->angular_velocity * {_rad-conversion}) * {_time}, 0, 0)
+      # Update the element representing this body
+      update_element({_scene}->scene, {_body}->element)
+      # Check for collisions
+      for {_other-body} in {_scene}->bodies where [input != {_body}]:
+        set {_collision} to calculate_contact_points({_scene}->scene, {_body}, {_other-body})
+        #
+        if {_collision} is set:
+          #
+          set {_a} to {_collision}->a
+          set {_el-a} to {_a}->element
+          set {_b} to {_collision}->b
+          set {_el-b} to {_b}->element
+          #
+          set {_e} to min({_a}->e, {_b}->e)
+          #
+          delete {_impulses::*}
+          delete {_ral::*}
+          delete {_rbl::*}
+          # loop through contacts
+          for {_contact} in {_collision}->contacts:
+            # calculate the r's and their perpendiculars
+            set {_r-a} to {_contact} - {_el-a}->position
+            set {_rp-a} to vector((y of {_r-a}) * -1, x of {_r-a}, 0)
+            set {_r-b} to {_contact} - {_el-b}->position
+            set {_rp-b} to vector((y of {_r-b}) * -1, x of {_r-b}, 0)
+            # calculate relative velocity
+            set {_rel-vel} to ({_b}->velocity + {_rp-b} * {_b}->angular_velocity) - ({_a}->velocity + {_rp-a} * {_a}->angular_velocity)
+            #
+            set {_contact-velocity-mag} to {_rel-vel} dot {_collision}->normal
+            # is relative velocity bad?
+            if {_contact-velocity-mag} > 0:
+              continue
+            # Check if the objects are kinematic
+            if {_a}->kinematic = false:
+              set {_rpdn-a} to {_a}->inv_mass + (({_rp-a} dot {_collision}->normal) ^ 2) * {_a}->inv_inertia
+            #
+            if {_b}->kinematic = false:
+              set {_rpdn-b} to {_b}->inv_mass + (({_rp-b} dot {_collision}->normal) ^ 2) * {_b}->inv_inertia
+            # Calculate the impulse magnitude
+            set {_j} to ((-1 - {_e}) * {_contact-velocity-mag}) / ({_rpdn-a} + {_rpdn-b})
+            #
+            # Make the impulse vector
+            add ({_j} / {_collision}->contact_count) * {_collision}->normal to {_impulses::*}
+            #
+            add {_r-a} to {_ral::*}
+            add {_r-b} to {_rbl::*}
+          # Apply impulses
+          for {_impulse} in {_impulses::*}:
+            #
+            set {_r-a} to {_ral::%loop-iteration-4%}
+            set {_r-b} to {_rbl::%loop-iteration-4%}
+            # Application
+            if {_b}->kinematic = false:
+              set {_b}->velocity to {_b}->velocity + {_impulse} * {_b}->inv_mass
+              #
+              set {_cross} to (x of {_r-b}) * (y of {_impulse}) - (y of {_r-b}) * (x of {_impulse})
+              set {_b}->angular_velocity to {_b}->angular_velocity + ({_cross} * {_b}->inv_inertia)
+            #
+            if {_a}->kinematic = false:
+              set {_a}->velocity to {_a}->velocity - {_impulse} * {_a}->inv_mass
+              #
+              set {_cross} to (x of {_r-a}) * (y of {_impulse}) - (y of {_r-a}) * (x of {_impulse})
+              set {_a}->angular_velocity to {_a}->angular_velocity - ({_cross} * {_a}->inv_inertia)
+
+local function calculate_contact_points(scene: Scene struct, a: Rigidbody struct, b: Rigidbody struct) :: Collision struct:
+  #
+  set {_el-a} to {_a}->element
+  set {_el-b} to {_b}->element
+  # Calculate the axes
+  set {_axes::1} to {_el-a}->n0
+  set {_axes::2} to {_el-a}->n1
+  set {_axes::3} to {_el-b}->n0
+  set {_axes::4} to {_el-b}->n1
+  #
+  set {_smallest-overlap} to ∞
+  #
+  loop {_axes::*}:
+    set {_av::*} to project_element(loop-value, {_el-a})
+    set {_bv::*} to project_element(loop-value, {_el-b})
+    #
+    set {_overlap} to min({_av::2}, {_bv::2}) - max({_av::1}, {_bv::1})
+    #
+    if {_overlap} < 0:
+      return {_none}
+    #
+    else if {_overlap} < {_smallest-overlap}:
+      set {_smallest-overlap} to {_overlap}
+      set {_mtv} to loop-value
+      if loop-index = "1" or "2":
+        set {_real-a} to {_b}
+        set {_real-b} to {_a}
+      else:
+        set {_real-a} to {_a}
+        set {_real-b} to {_b}
+  #
+  # The two bodies are colliding. First, make sure the minimal translation axis is pointing in the correct direction
+  set {_dir} to {_real-b}->element->position - {_real-a}->element->position
+  if ({_dir} dot {_mtv}) < 0:
+    set {_mtv} to {_mtv} * -1
+  # Separate the two bodies to make the contact points more accurate
+  set {_el-a} to {_real-a}->element
+  set {_el-b} to {_real-b}->element
+  #
+  set {_dep} to max({_smallest-overlap} - 0.01, 0 )
+  if all:
+    {_real-a}->kinematic = false
+    {_real-b}->kinematic = false
+  then:
+    set {_ar} to {_real-b}->mass * ({_real-a}->inv_mass + {_real-b}->inv_mass)
+    set {_br} to {_real-a}->mass * ({_real-b}->inv_mass + {_real-a}->inv_mass)
+    #
+    set {_el-a}->position to {_el-a}->position - ({_mtv} * {_dep} * {_ar} * 0.2)
+    set {_el-b}->position to {_el-b}->position + ({_mtv} * {_dep} * {_br} * 0.2)
+  else if {_real-a}->kinematic = false:
+    set {_el-a}->position to {_el-a}->position - ({_mtv} * {_dep} * 0.2)
+    #broadcast "a!"
+  else if {_real-b}->kinematic = false:
+    set {_el-b}->position to {_el-b}->position + ({_mtv} * {_dep} * 0.2)
+  # Update the elements' corners and edges
+  update_element({_scene}, {_el-a})
+  update_element({_scene}, {_el-b})
+  # We can now attempt to calculate the contact points through the elements' vertices
+  set {_closest-points-dist} to ∞
+  set {_count} to 0
+  #
+  #set {_col::*} to rgb(255, 0, 0), rgb(0, 255, 0), rgb(0, 0, 255), rgb(255, 255, 0)
+  set {_el::*} to {_el-b}, {_el-a}
+  loop ({_el-a}, {_el-b}):
+    set {_other} to {_el::%loop-iteration%}
+    loop (loop-value)->c: # Compare vertices with edges
+      # Render corners
+      #add_element_to_scene({_scene}, Element struct instance):
+      #  position: loop-value-2
+      #  colour: {_col::%loop-iteration-2%}
+      #  scale: vector(2, 2, 0)
+      # First edge axis
+      loop ((1st element of {_other}->c), (4th element of {_other}->c)):
+        set {_origin} to (loop-value-3) dot {_other}->n0
+        set {_point} to (loop-value-3) + clamp(((loop-value-2) dot {_other}->n0) - {_origin}, 0, x of {_other}->scale) * {_other}->n0
+        # Calculate the point distance
+        set {_distance} to vector length of ({_point} - (loop-value-2))
+        # Is the distance close to the smallest distance we've previously found? That means this is our second contact!
+        if abs({_closest-points-dist} - {_distance}) < 0.01:
+          add {_point} to {_closest-points::*}
+          add 1 to {_count}
+        # Is the distance smaller than the closest points we've previously found?
+        else if {_distance} < {_closest-points-dist}:
+          set {_closest-points::*} to {_point}
+          set {_closest-points-dist} to {_distance}
+          set {_count} to 1
+      # Second edge axis
+      loop ((1th element of {_other}->c), (2th element of {_other}->c)):
+        set {_origin} to (loop-value-3) dot {_other}->n1
+        set {_point} to (loop-value-3) + clamp(((loop-value-2) dot {_axes::4}) - {_origin}, 0, y of {_other}->scale) * {_other}->n1
+        # Calculate the point distance
+        set {_distance} to vector length of ({_point} - (loop-value-2))
+        # Is the distance close to the smallest distance we've previously found? That means this is our second contact!
+        if abs({_closest-points-dist} - {_distance}) < 0.01:
+          add {_point} to {_closest-points::*}
+          add 1 to {_count}
+        # Is the distance smaller than the closest points we've previously found?
+        else if {_distance} < {_closest-points-dist}:
+          set {_closest-points::*} to {_point}
+          set {_closest-points-dist} to {_distance}
+          set {_count} to 1
+  # Render the contact points
+  #
+  return Collision struct instance:
+    a: {_real-a}
+    b: {_real-b}
+    normal: {_mtv}
+    depth: {_smallest-overlap}
+    contacts: {_closest-points::*}
+    contact_count: {_count}
