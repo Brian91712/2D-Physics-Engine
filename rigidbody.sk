@@ -8,7 +8,7 @@ struct Rigidbody:
   velocity: vector = vector(0, 0, 0)
   angular_velocity: number = 0
   #
-  e: number = 0.0
+  e: number = 0.2
   mass: number = 1
   inv_mass: number
   inertia: number
