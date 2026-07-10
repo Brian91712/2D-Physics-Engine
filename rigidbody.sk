@@ -22,8 +22,6 @@ struct PhysicalScene:
   time: number = 1 # How fast time is moving
 
 struct Collision:
-  a: Rigidbody struct
-  b: Rigidbody struct
   normal: vector
   depth: number
   contacts: vectors
@@ -51,26 +49,23 @@ function update_physical_scene(scene: PhysicalScene struct):
   set {_rad-conversion} to 180 / π
   #
   loop 50 times:
-    for {_body} in {_scene}->bodies where [(input)->kinematic = false]:
+    for {_a} in {_scene}->bodies where [(input)->kinematic = false]:
       #
-      set {_el} to {_body}->element
+      set {_el-a} to {_a}->element
       # Apply gravity
-      set {_body}->velocity to {_body}->velocity + {_scene}->gravity * {_time}
+      set {_a}->velocity to {_a}->velocity + {_scene}->gravity * {_time}
       # Positional integration
-      set {_el}->position to {_el}->position + {_body}->velocity * {_time}
+      set {_el-a}->position to {_el-a}->position + {_a}->velocity * {_time}
       # Rotational integration
-      set {_el}->rotation to {_el}->rotation + vector(({_body}->angular_velocity * {_rad-conversion}) * {_time}, 0, 0)
+      set {_el-a}->rotation to {_el-a}->rotation + vector(({_a}->angular_velocity * {_rad-conversion}) * {_time}, 0, 0)
       # Update the element representing this body
-      update_element({_scene}->scene, {_body}->element)
+      update_element({_scene}->scene, {_el-a})
       # Check for collisions
-      for {_other-body} in {_scene}->bodies where [input != {_body}]:
-        set {_collision} to calculate_contact_points({_scene}->scene, {_body}, {_other-body})
+      for {_b} in {_scene}->bodies where [input != {_a}]:
+        set {_collision} to calculate_contact_points({_scene}->scene, {_a}, {_b})
         #
         if {_collision} is set:
           #
-          set {_a} to {_collision}->a
-          set {_el-a} to {_a}->element
-          set {_b} to {_collision}->b
           set {_el-b} to {_b}->element
           #
           set {_e} to min({_a}->e, {_b}->e)
@@ -148,36 +143,28 @@ local function calculate_contact_points(scene: Scene struct, a: Rigidbody struct
     else if {_overlap} < {_smallest-overlap}:
       set {_smallest-overlap} to {_overlap}
       set {_mtv} to loop-value
-      if loop-index = "1" or "2":
-        set {_real-a} to {_b}
-        set {_real-b} to {_a}
-      else:
-        set {_real-a} to {_a}
-        set {_real-b} to {_b}
   #
   # The two bodies are colliding. First, make sure the minimal translation axis is pointing in the correct direction
-  set {_dir} to {_real-b}->element->position - {_real-a}->element->position
+  set {_dir} to {_el-b}->position - {_el-a}->position
   if ({_dir} dot {_mtv}) < 0:
     set {_mtv} to {_mtv} * -1
   # Separate the two bodies to make the contact points more accurate
-  set {_el-a} to {_real-a}->element
-  set {_el-b} to {_real-b}->element
-  #
   set {_dep} to max({_smallest-overlap} - 0.01, 0 )
   if all:
-    {_real-a}->kinematic = false
-    {_real-b}->kinematic = false
+    {_a}->kinematic = false
+    {_b}->kinematic = false
   then:
-    set {_ar} to {_real-b}->mass * ({_real-a}->inv_mass + {_real-b}->inv_mass)
-    set {_br} to {_real-a}->mass * ({_real-b}->inv_mass + {_real-a}->inv_mass)
+    set {_total} to {_a}->inv_mass + {_b}->inv_mass
+    set {_ar} to {_b}->mass / {_total}
+    set {_br} to {_a}->mass / {_total}
     #
-    set {_el-a}->position to {_el-a}->position - ({_mtv} * {_dep} * {_ar} * 0.2)
-    set {_el-b}->position to {_el-b}->position + ({_mtv} * {_dep} * {_br} * 0.2)
-  else if {_real-a}->kinematic = false:
-    set {_el-a}->position to {_el-a}->position - ({_mtv} * {_dep} * 0.2)
+    set {_el-a}->position to {_el-a}->position - ({_mtv} * {_dep} * {_ar} * 0.7)
+    set {_el-b}->position to {_el-b}->position + ({_mtv} * {_dep} * {_br} * 0.7)
+  else if {_a}->kinematic = false:
+    set {_el-a}->position to {_el-a}->position - ({_mtv} * {_dep} * 0.7)
     #broadcast "a!"
   else if {_real-b}->kinematic = false:
-    set {_el-b}->position to {_el-b}->position + ({_mtv} * {_dep} * 0.2)
+    set {_el-b}->position to {_el-b}->position + ({_mtv} * {_dep} * 0.7)
   # Update the elements' corners and edges
   update_element({_scene}, {_el-a})
   update_element({_scene}, {_el-b})
@@ -185,24 +172,18 @@ local function calculate_contact_points(scene: Scene struct, a: Rigidbody struct
   set {_closest-points-dist} to ∞
   set {_count} to 0
   #
-  #set {_col::*} to rgb(255, 0, 0), rgb(0, 255, 0), rgb(0, 0, 255), rgb(255, 255, 0)
   set {_el::*} to {_el-b}, {_el-a}
   loop ({_el-a}, {_el-b}):
     set {_other} to {_el::%loop-iteration%}
     loop (loop-value)->c: # Compare vertices with edges
-      # Render corners
-      #add_element_to_scene({_scene}, Element struct instance):
-      #  position: loop-value-2
-      #  colour: {_col::%loop-iteration-2%}
-      #  scale: vector(2, 2, 0)
       # First edge axis
       loop ((1st element of {_other}->c), (4th element of {_other}->c)):
         set {_origin} to (loop-value-3) dot {_other}->n0
         set {_point} to (loop-value-3) + clamp(((loop-value-2) dot {_other}->n0) - {_origin}, 0, x of {_other}->scale) * {_other}->n0
         # Calculate the point distance
-        set {_distance} to vector length of ({_point} - (loop-value-2))
+        set {_distance} to ((x of {_point}) - (x of (loop-value-2))^2 + ((y of {_point}) - (y of (loop-value-2))^2 + ((z of {_point}) - (z of (loop-value-2))^2
         # Is the distance close to the smallest distance we've previously found? That means this is our second contact!
-        if abs({_closest-points-dist} - {_distance}) < 0.01:
+        if abs({_closest-points-dist} - {_distance}) < 0.001:
           add {_point} to {_closest-points::*}
           add 1 to {_count}
         # Is the distance smaller than the closest points we've previously found?
@@ -215,9 +196,9 @@ local function calculate_contact_points(scene: Scene struct, a: Rigidbody struct
         set {_origin} to (loop-value-3) dot {_other}->n1
         set {_point} to (loop-value-3) + clamp(((loop-value-2) dot {_axes::4}) - {_origin}, 0, y of {_other}->scale) * {_other}->n1
         # Calculate the point distance
-        set {_distance} to vector length of ({_point} - (loop-value-2))
+        set {_distance} to ((x of {_point}) - (x of (loop-value-2))^2 + ((y of {_point}) - (y of (loop-value-2))^2 + ((z of {_point}) - (z of (loop-value-2))^2
         # Is the distance close to the smallest distance we've previously found? That means this is our second contact!
-        if abs({_closest-points-dist} - {_distance}) < 0.01:
+        if abs({_closest-points-dist} - {_distance}) < 0.001:
           add {_point} to {_closest-points::*}
           add 1 to {_count}
         # Is the distance smaller than the closest points we've previously found?
@@ -228,8 +209,6 @@ local function calculate_contact_points(scene: Scene struct, a: Rigidbody struct
   # Render the contact points
   #
   return Collision struct instance:
-    a: {_real-a}
-    b: {_real-b}
     normal: {_mtv}
     depth: {_smallest-overlap}
     contacts: {_closest-points::*}
