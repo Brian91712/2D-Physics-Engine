@@ -181,7 +181,7 @@ local function calculate_contact_points(scene: Scene struct, a: Rigidbody struct
         set {_origin} to (loop-value-3) dot {_other}->n0
         set {_point} to (loop-value-3) + clamp(((loop-value-2) dot {_other}->n0) - {_origin}, 0, x of {_other}->scale) * {_other}->n0
         # Calculate the point distance
-        set {_distance} to ((x of {_point}) - (x of (loop-value-2))^2 + ((y of {_point}) - (y of (loop-value-2))^2 + ((z of {_point}) - (z of (loop-value-2))^2
+        set {_distance} to ((x of {_point}) - (x of (loop-value-2)))^2 + ((y of {_point}) - (y of (loop-value-2)))^2 + ((z of {_point}) - (z of (loop-value-2)))^2
         # Is the distance close to the smallest distance we've previously found? That means this is our second contact!
         if abs({_closest-points-dist} - {_distance}) < 0.001:
           add {_point} to {_closest-points::*}
@@ -196,7 +196,7 @@ local function calculate_contact_points(scene: Scene struct, a: Rigidbody struct
         set {_origin} to (loop-value-3) dot {_other}->n1
         set {_point} to (loop-value-3) + clamp(((loop-value-2) dot {_axes::4}) - {_origin}, 0, y of {_other}->scale) * {_other}->n1
         # Calculate the point distance
-        set {_distance} to ((x of {_point}) - (x of (loop-value-2))^2 + ((y of {_point}) - (y of (loop-value-2))^2 + ((z of {_point}) - (z of (loop-value-2))^2
+        set {_distance} to ((x of {_point}) - (x of (loop-value-2)))^2 + ((y of {_point}) - (y of (loop-value-2)))^2 + ((z of {_point}) - (z of (loop-value-2)))^2
         # Is the distance close to the smallest distance we've previously found? That means this is our second contact!
         if abs({_closest-points-dist} - {_distance}) < 0.001:
           add {_point} to {_closest-points::*}
