@@ -1,5 +1,5 @@
 name: 2d-physics-engine
-version: 1.0
+version: 2.0
 description: A simple and easy to use 2D physics engine intended to work with the 2D scene renderer, made by Brian9171.
-requires: skript >= 2.15, oopsk >= 1.0
+requires: skript >= 2.15, oopsk >= 1.0, skript-reflect >= 2.6
 packages: https://github.com/Brian91712/2D-Scene-Renderer
