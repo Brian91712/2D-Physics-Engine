@@ -2,6 +2,10 @@
 # This is a rigidbody physics engine made by Brian9171. uses stuff probably
 #-------------------------------
 
+import:
+  org.bukkit.util.Vector
+  java.lang.System
+
 struct Rigidbody:
   element: Element struct
   #
@@ -10,16 +14,20 @@ struct Rigidbody:
   #
   e: number = 0.2
   mass: number = 1
-  inv_mass: number
-  inertia: number
-  inv_inertia: number
+  #
   kinematic: boolean = false
+  #
+  radius_squared: number
+  inertia: number
+  inv_mass: number
+  inv_inertia: number
 
 struct PhysicalScene:
   scene: Scene struct
   bodies: Rigidbody structs
   gravity: vector = vector(0, -200, 0)
   time: number = 1 # How fast time is moving
+  substeps: integer = 25 # How many substeps should the simulation use?
 
 struct Collision:
   normal: vector
@@ -35,57 +43,108 @@ function create_rigidbody(scene: PhysicalScene struct, body: Rigidbody struct, p
     colour: {_colour}
     rotation: vector({_rotation}, 0, 0)
   #
-  set {_body}->inertia to (({_body}->mass) * ((x of {_scale})^2 + (y of {_scale})^2)) / 12
+  set {_squared-x} to (x of {_scale})^2
+  set {_squared-y} to (y of {_scale})^2
+  #
+  set {_body}->inertia to (({_body}->mass) * ({_squared-x} + {_squared-y})) / 12
   set {_body}->inv_mass to 1 / ({_body}->mass)
   set {_body}->inv_inertia to 1 / ({_body}->inertia)
+  # squared radius
+  set {_body}->radius_squared to max({_squared-x}, {_squared-y})
+  #
   add {_body} to {_scene}->bodies
   return {_body}
 
-function update_physical_scene(scene: PhysicalScene struct):
-  set {_time} to {_scene}->time * 0.001
+function update_rigidbody_variables(body: Rigidbody struct):
+  #
+  set {_scale} to ({_body}->element)->scale
+  #
+  set {_squared-x} to (x of {_scale})^2
+  set {_squared-y} to (y of {_scale})^2
+  #
+  set {_body}->inertia to (({_body}->mass) * ({_squared-x} + {_squared-y})) / 12
+  set {_body}->inv_mass to 1 / ({_body}->mass)
+  set {_body}->inv_inertia to 1 / ({_body}->inertia)
+  # squared radius
+  set {_body}->radius_squared to max({_squared-x}, {_squared-y}) + 1
+
+function update_physical_scene(scene: PhysicalScene struct) :: number:
+  set {_start-time} to System.nanoTime()
+  #
+  set {_time} to {_scene}->time * (0.05 / {_scene}->substeps)
   if {_time} <= 0:
     stop
   #
-  set {_rad-conversion} to 180 / π
-  #
-  loop 50 times:
+  loop {_scene}->substeps times:
     for {_a} in {_scene}->bodies where [(input)->kinematic = false]:
       #
       set {_el-a} to {_a}->element
       # Apply gravity
-      set {_a}->velocity to {_a}->velocity + {_scene}->gravity * {_time}
+      set {_velocity} to ({_a}->velocity) + ({_scene}->gravity) * {_time}
+      #
+      set {_a}->velocity to {_velocity}
       # Positional integration
-      set {_el-a}->position to {_el-a}->position + {_a}->velocity * {_time}
+      set {_previous-position} to {_el-a}->position
+      set {_position} to {_previous-position} + {_velocity} * {_time}
+      #
+      set {_el-a}->position to {_position}
       # Rotational integration
-      set {_el-a}->rotation to {_el-a}->rotation + vector(({_a}->angular_velocity * {_rad-conversion}) * {_time}, 0, 0)
+      delete {_rotation}
+      #
+      if abs({_a}->angular_velocity) > 0:
+        set {_rotation} to {_el-a}->rotation + vector(({_a}->angular_velocity) * {_time}, 0, 0) # 
+        #
+        set {_el-a}->rotation to {_rotation}
       # Update the element representing this body
-      update_element({_scene}->scene, {_el-a})
+      #  If the object rotated, then we need to recalculate axes too
+      if {_rotation} is set:
+        set {_c::*} to {-2dsr-element-vertices::*} transformed using [input * {_el-a}->scale]
+        #
+        set {_angle} to (x of {_rotation}) * 57.2957795131
+        #
+        loop {_c::*}:
+          set {_x} to x of (loop-value-3)
+          set {_y} to y of (loop-value-3)
+          set {_nx} to ({_x} * cos({_angle})) - ({_y} * sin({_angle}))
+          set {_ny} to ({_x} * sin({_angle})) + ({_y} * cos({_angle}))
+          set {_c::%loop-index%} to vector({_nx}, {_ny}, 0) + {_position}
+        #
+        set {_el-a}->c to {_c::*}
+        # Calculate the axes
+        set {_n} to normalized ({_c::2} - {_c::1})
+        set {_el-a}->n0 to {_n}
+        set {_el-a}->n1 to normalized vector((y of {_n}) * -1, x of {_n}, 0)
+      #  If the object only moved linearly, then we can just ignore that and only transform the corners
+      else:
+        set {_el-a}->c to {_el-a}->c transformed using [input + {_position} - {_previous-position}]
       # Check for collisions
       for {_b} in {_scene}->bodies where [input != {_a}]:
-        set {_collision} to calculate_contact_points({_scene}->scene, {_a}, {_b})
+        set {_el-b} to {_b}->element
+        # Check if they are close enough for any kind of collision
+        set {_dist} to ((x of {_el-b}->position) - (x of {_el-a}->position))^2 + ((y of {_el-b}->position) - (y of {_el-a}->position))^2 + ((z of {_el-b}->position) - (z of {_el-a}->position))^2
+        # 
+        if {_dist} >= ({_a}->radius_squared + {_b}->radius_squared):
+          continue
+        #
+        set {_collision} to calculate_contact_points({_a}, {_b})
         #
         if {_collision} is set:
           #
-          set {_el-b} to {_b}->element
-          #
           set {_e} to min({_a}->e, {_b}->e)
           #
-          delete {_impulses::*}
-          delete {_ral::*}
-          delete {_rbl::*}
           # loop through contacts
           for {_contact} in {_collision}->contacts:
             # calculate the r's and their perpendiculars
-            set {_r-a} to {_contact} - {_el-a}->position
+            set {_r-a} to {_contact} - ({_el-a}->position)
             set {_rp-a} to vector((y of {_r-a}) * -1, x of {_r-a}, 0)
-            set {_r-b} to {_contact} - {_el-b}->position
+            set {_r-b} to {_contact} - ({_el-b}->position)
             set {_rp-b} to vector((y of {_r-b}) * -1, x of {_r-b}, 0)
             # calculate relative velocity
             set {_rel-vel} to ({_b}->velocity + {_rp-b} * {_b}->angular_velocity) - ({_a}->velocity + {_rp-a} * {_a}->angular_velocity)
             #
             set {_contact-velocity-mag} to {_rel-vel} dot {_collision}->normal
-            # is relative velocity bad?
-            if {_contact-velocity-mag} > 0:
+            # is relative velocity bad? are they already moving away?
+            if {_contact-velocity-mag} < 0:
               continue
             # Check if the objects are kinematic
             if {_a}->kinematic = false:
@@ -95,43 +154,54 @@ function update_physical_scene(scene: PhysicalScene struct):
               set {_rpdn-b} to {_b}->inv_mass + (({_rp-b} dot {_collision}->normal) ^ 2) * {_b}->inv_inertia
             # Calculate the impulse magnitude
             set {_j} to ((-1 - {_e}) * {_contact-velocity-mag}) / ({_rpdn-a} + {_rpdn-b})
-            #
             # Make the impulse vector
-            add ({_j} / {_collision}->contact_count) * {_collision}->normal to {_impulses::*}
-            #
-            add {_r-a} to {_ral::*}
-            add {_r-b} to {_rbl::*}
-          # Apply impulses
-          for {_impulse} in {_impulses::*}:
-            #
-            set {_r-a} to {_ral::%loop-iteration-4%}
-            set {_r-b} to {_rbl::%loop-iteration-4%}
+            set {_impulse} to ({_j} / {_collision}->contact_count) * {_collision}->normal
             # Application
-            if {_b}->kinematic = false:
-              set {_b}->velocity to {_b}->velocity + {_impulse} * {_b}->inv_mass
-              #
-              set {_cross} to (x of {_r-b}) * (y of {_impulse}) - (y of {_r-b}) * (x of {_impulse})
-              set {_b}->angular_velocity to {_b}->angular_velocity + ({_cross} * {_b}->inv_inertia)
-            #
             if {_a}->kinematic = false:
               set {_a}->velocity to {_a}->velocity - {_impulse} * {_a}->inv_mass
               #
               set {_cross} to (x of {_r-a}) * (y of {_impulse}) - (y of {_r-a}) * (x of {_impulse})
               set {_a}->angular_velocity to {_a}->angular_velocity - ({_cross} * {_a}->inv_inertia)
+            #
+            if {_b}->kinematic = false:
+              set {_b}->velocity to {_b}->velocity + {_impulse} * {_b}->inv_mass
+              #
+              set {_cross} to (x of {_r-b}) * (y of {_impulse}) - (y of {_r-b}) * (x of {_impulse})
+              set {_b}->angular_velocity to {_b}->angular_velocity + ({_cross} * {_b}->inv_inertia)
+      # Render the moving elements
+      if loop-iteration-1 = {_scene}->substeps:
+        # Calculate scale:
+        set {_scale} to ({_el-a}->scale) * {-2dsr-pixel-scale-scale}
+        # Check if we need to recalculate orientation
+        if {_rotation} is set:
+          set {_orientation} to ((left rotation of {_el-a}->entity).identity()).rotationZ((x of {_rotation}))
+        else:
+          set {_orientation} to left rotation of {_el-a}->entity
+        # Calculate translation
+        set {_translation} to ({-2dsr-base-center-translation} * {_scale}).toVector3f()
+        set {_translation} to {_translation}.rotate({_orientation})
+        set {_translation} to Vector.fromJOML({_translation}) + ({_el-a}->position) * {-2dsr-pixel-scale-translation}
+        # Update:
+        set interpolation delay of {_el-a}->entity to 0 tick
+        #
+        set colour of {_el-a}->entity to {_el-a}->colour
+        set transformation scale of {_el-a}->entity to {_scale} * {-2dsr-base-scale}# * vector(0.6, 1, 1)
+        #
+        if {_rotation} is set:
+          set left rotation of {_el-a}->entity to {_orientation}
+        #
+        set transformation translation of {_el-a}->entity to {_translation}
+  #
+  return (System.nanoTime() - {_start-time}) / 1000000
 
-local function calculate_contact_points(scene: Scene struct, a: Rigidbody struct, b: Rigidbody struct) :: Collision struct:
+local function calculate_contact_points(a: Rigidbody struct, b: Rigidbody struct) :: Collision struct:
   #
   set {_el-a} to {_a}->element
   set {_el-b} to {_b}->element
   # Calculate the axes
-  set {_axes::1} to {_el-a}->n0
-  set {_axes::2} to {_el-a}->n1
-  set {_axes::3} to {_el-b}->n0
-  set {_axes::4} to {_el-b}->n1
-  #
   set {_smallest-overlap} to ∞
   #
-  loop {_axes::*}:
+  loop ({_el-a}->n0, {_el-a}->n1, {_el-b}->n0, {_el-b}->n1):
     set {_av::*} to project_element(loop-value, {_el-a})
     set {_bv::*} to project_element(loop-value, {_el-b})
     #
@@ -146,66 +216,78 @@ local function calculate_contact_points(scene: Scene struct, a: Rigidbody struct
   #
   # The two bodies are colliding. First, make sure the minimal translation axis is pointing in the correct direction
   set {_dir} to {_el-b}->position - {_el-a}->position
-  if ({_dir} dot {_mtv}) < 0:
+  if ({_dir} dot {_mtv}) > 0:
     set {_mtv} to {_mtv} * -1
   # Separate the two bodies to make the contact points more accurate
-  set {_dep} to max({_smallest-overlap} - 0.01, 0 )
   if all:
     {_a}->kinematic = false
     {_b}->kinematic = false
   then:
-    set {_total} to {_a}->inv_mass + {_b}->inv_mass
-    set {_ar} to {_b}->mass / {_total}
-    set {_br} to {_a}->mass / {_total}
+    set {_total} to ({_a}->inv_mass) + ({_b}->inv_mass)
+    set {_ar} to ({_b}->inv_mass) / {_total}
+    set {_br} to ({_a}->inv_mass) / {_total}
     #
-    set {_el-a}->position to {_el-a}->position - ({_mtv} * {_dep} * {_ar} * 0.7)
-    set {_el-b}->position to {_el-b}->position + ({_mtv} * {_dep} * {_br} * 0.7)
+    set {_a-offset} to {_mtv} * {_smallest-overlap} * {_ar}
+    set {_b-offset} to {_mtv} * {_smallest-overlap} * {_br}
+    set {_el-a}->position to {_el-a}->position + {_a-offset}
+    set {_el-b}->position to {_el-b}->position - {_b-offset}
+  #
   else if {_a}->kinematic = false:
-    set {_el-a}->position to {_el-a}->position - ({_mtv} * {_dep} * 0.7)
-    #broadcast "a!"
-  else if {_real-b}->kinematic = false:
-    set {_el-b}->position to {_el-b}->position + ({_mtv} * {_dep} * 0.7)
+    set {_a-offset} to {_mtv} * {_smallest-overlap}
+    set {_el-a}->position to {_el-a}->position + {_a-offset}
+  #
+  else if {_b}->kinematic = false:
+    set {_b-offset} to {_mtv} * {_smallest-overlap}
+    set {_el-b}->position to {_el-b}->position - {_b-offset}
   # Update the elements' corners and edges
-  update_element({_scene}, {_el-a})
-  update_element({_scene}, {_el-b})
+  if {_a-offset} is set:
+    set {_el-a}->c to {_el-a}->c transformed using [input + {_a-offset}]
+  #
+  if {_b-offset} is set:
+    set {_el-b}->c to {_el-b}->c transformed using [input - {_b-offset}]
   # We can now attempt to calculate the contact points through the elements' vertices
   set {_closest-points-dist} to ∞
   set {_count} to 0
+  #   Figure out which edge of the other body is PERFECT
+  set {_perp-mtv} to vector((y of {_mtv}), (x of {_mtv}) * -1, 0)
+  set {_smallest} to 2
   #
-  set {_el::*} to {_el-b}, {_el-a}
-  loop ({_el-a}, {_el-b}):
-    set {_other} to {_el::%loop-iteration%}
-    loop (loop-value)->c: # Compare vertices with edges
-      # First edge axis
-      loop ((1st element of {_other}->c), (4th element of {_other}->c)):
-        set {_origin} to (loop-value-3) dot {_other}->n0
-        set {_point} to (loop-value-3) + clamp(((loop-value-2) dot {_other}->n0) - {_origin}, 0, x of {_other}->scale) * {_other}->n0
-        # Calculate the point distance
-        set {_distance} to ((x of {_point}) - (x of (loop-value-2)))^2 + ((y of {_point}) - (y of (loop-value-2)))^2 + ((z of {_point}) - (z of (loop-value-2)))^2
-        # Is the distance close to the smallest distance we've previously found? That means this is our second contact!
-        if abs({_closest-points-dist} - {_distance}) < 0.001:
-          add {_point} to {_closest-points::*}
-          add 1 to {_count}
-        # Is the distance smaller than the closest points we've previously found?
-        else if {_distance} < {_closest-points-dist}:
-          set {_closest-points::*} to {_point}
-          set {_closest-points-dist} to {_distance}
-          set {_count} to 1
-      # Second edge axis
-      loop ((1th element of {_other}->c), (2th element of {_other}->c)):
-        set {_origin} to (loop-value-3) dot {_other}->n1
-        set {_point} to (loop-value-3) + clamp(((loop-value-2) dot {_axes::4}) - {_origin}, 0, y of {_other}->scale) * {_other}->n1
-        # Calculate the point distance
-        set {_distance} to ((x of {_point}) - (x of (loop-value-2)))^2 + ((y of {_point}) - (y of (loop-value-2)))^2 + ((z of {_point}) - (z of (loop-value-2)))^2
-        # Is the distance close to the smallest distance we've previously found? That means this is our second contact!
-        if abs({_closest-points-dist} - {_distance}) < 0.001:
-          add {_point} to {_closest-points::*}
-          add 1 to {_count}
-        # Is the distance smaller than the closest points we've previously found?
-        else if {_distance} < {_closest-points-dist}:
-          set {_closest-points::*} to {_point}
-          set {_closest-points-dist} to {_distance}
-          set {_count} to 1
+  loop (({_el-b}->n0), ({_el-b}->n1)):
+    set {_dot} to (loop-value) dot {_perp-mtv}
+    if {_dot} < {_smallest}:
+      set {_smallest} to {_dot}
+      set {_edge} to loop-value
+      set {_index} to (loop-iteration)
+    #
+    set {_dot} to {_dot} * -1
+    if {_dot} < {_smallest}:
+      set {_smallest} to {_dot}
+      set {_edge} to (loop-value) * -1
+      set {_index} to (loop-iteration) + 2
+  #
+  if {_index} = 1 or 3:
+    set {_edge-length} to x of {_el-b}->scale
+  else:
+    set {_edge-length} to y of {_el-b}->scale
+  #
+  set {_corner} to {_index}th element out of {_el-b}->c
+  set {_corner-edge} to {_corner} dot {_edge}
+  #
+  loop {_el-a}->c: # Compare vertices with edges
+    #
+    set {_point} to {_corner} + clamp(((loop-value) dot {_edge}) - {_corner-edge}, 0, {_edge-length}) * {_edge}
+    # Calculate the point distance
+    set {_distance} to ((x of {_point}) - (x of (loop-value)))^2 + ((y of {_point}) - (y of (loop-value)))^2 + ((z of {_point}) - (z of (loop-value)))^2
+    #
+    # Is the distance close to the smallest distance we've previously found? That means this is our second contact!
+    if abs({_closest-points-dist} - {_distance}) < 0.1:
+      add 1 to {_count}
+      set {_closest-points::%{_count}%} to {_point}
+    # Is the distance smaller than the closest points we've previously found?
+    else if {_distance} < {_closest-points-dist}:
+      set {_closest-points::*} to {_point}
+      set {_closest-points-dist} to {_distance}
+      set {_count} to 1
   #
   return Collision struct instance:
     normal: {_mtv}
